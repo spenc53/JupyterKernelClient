@@ -1,4 +1,5 @@
 import { Subscriber, Request, Dealer } from 'zeromq';
+import { v4 as uuid } from 'uuid';
 
 // 'hb' : zmq.REQ,
 // 'shell' : zmq.DEALER,
@@ -13,12 +14,18 @@ export class JupyterKernelClient {
     control: Dealer;
     heartbeat: Request;
 
+
     decoder: TextDecoder = new TextDecoder()
+
+    verbose = false;
+
+    id = uuid();
 
     constructor(config: KernelConfig) {
         const base_url = `${config.transport}://${config.ip}`;
 
         this.shell = new Dealer()
+        this.shell.routingId = this.id;
         this.shell.connect(`${base_url}:${config.shell_port}`);
 
         this.ioPub = new Subscriber();
@@ -26,6 +33,8 @@ export class JupyterKernelClient {
         this.ioPub.subscribe('');
 
         this.stdin = new Dealer();
+        this.stdin.routingId = this.id;
+        console.log(`${base_url}:${config.stdin_port}`)
         this.stdin.connect(`${base_url}:${config.stdin_port}`);
 
         this.control = new Dealer();
@@ -35,7 +44,61 @@ export class JupyterKernelClient {
         this.heartbeat.connect(`${base_url}:${config.hb_port}`);
     }
 
-    recv_message(messages: Buffer[]): any {
+    public async subscribeToIOLoop(ioMessageReciever: MessageReciever) {
+        while (true) {
+            const messages = await this.ioPub.receive();
+            const data = this.recvMessage(messages);
+            ioMessageReciever(data);
+        }
+    }
+
+    public async getKernelInfo(shellMessageReciever: MessageReciever) {
+        await this.shell.send(this.buildJupyterMessage("kernel_info_request", {}));
+
+        const messages = await this.shell.receive()
+
+        const kernelData = this.recvMessage(messages);
+        shellMessageReciever(kernelData);
+    }
+
+    public async startSTDINLoop(stdinMessageReciever: MessageReciever) {
+        while (true) {
+            this.log("waiting for std_in")
+            const messages = await this.stdin.receive();
+            this.log('recieved std in message')
+            this.log('parsing std_in message')
+            const data = this.recvMessage(messages);
+            this.log('parsed std_in message:')
+            this.log(JSON.stringify(data, null, 2));
+            stdinMessageReciever(data);
+        }
+    }
+
+    public async stdinResponse() {
+        
+    }
+
+    public async sendShellCommand(command: string, shellMessageReciever: MessageReciever) {
+        // will this receive data?
+        // yes it will
+        // do I need to get the message?
+        const content = {
+            code: command,
+            silent: false,
+            store_history: true,
+            // user_expressions ???,
+            allow_stdin: true,
+            stop_on_error: true
+        }
+
+        const request = this.buildJupyterMessage("execute_request", content)
+        await this.shell.send(request);
+        const messages = await this.shell.receive()
+        const kernelData = this.recvMessage(messages);
+        shellMessageReciever(kernelData);
+    }
+
+    private recvMessage(messages: Buffer[]): any {
         let thing: JupyterMessage = {};
         let decodedMessages = messages.map((message) => this.decoder.decode(message))
 
@@ -53,46 +116,40 @@ export class JupyterKernelClient {
         if (indexOfDelim + 6 < messages.length) {
             thing.buffer = messages.reverse()[0]; // what if it doesn't exist?
         }
-        // console.log(thing)
-        console.log(JSON.stringify(thing.content, null, 2))
         return thing.content;
     }
 
-    async subscribeToIOLoop(messageReciever: MessageReciever) {
-        while (true) {
-            const messages = await this.ioPub.receive();
-            const data = this.recv_message(messages);
-            messageReciever(data);
-        }
-    }
-
-
-
-    async getKernelInfo() {
-        const data = {
-            msgType: 'kernel_info_request',
-            content: {}
-        }
-        console.log('request for kernel_info')
-        await this.shell.send([
+    private buildJupyterMessage(msgType: string, content: any) {
+        return [
+            this.id,
             "<IDS|MSG>",
             "",
-            JSON.stringify(this.getHeader()),
+            JSON.stringify(this.getHeader(msgType)),
             "{}",
             "{}",
-            "{}"
-        ]);
-
-        const messages = await this.shell.receive()
-
-        this.recv_message(messages);
+            JSON.stringify(content)// need to format this properly
+        ]
     }
 
-    getHeader() {
+    private getHeader(msgType: string) {
         return {
             msg_id: "1",
-            msg_type: "kernel_info_request"
+            msg_type: msgType
         }
+    }
+
+    private log(message: string): void {
+        if (this.verbose) {
+            console.log(message);
+        }
+    }
+
+    public setVerbose(verbose: boolean): void {
+        this.verbose = verbose;
+    }
+
+    public isVerbose(): boolean {
+        return this.verbose;
     }
 }
 
@@ -126,22 +183,34 @@ interface MessageReciever {
 };
 
 
-// const config: KernelConfig = {
-//     shell_port: "53794",
-//     iopub_port: "53795",
-//     stdin_port: "53796",
-//     control_port: "53797",
-//     hb_port: "53798",
-//     key: "",
-//     ip: "127.0.0.1",
-//     transport: "tcp",
-//     signature_scheme: "",
-//     kernel_name: ""
-// }
+const config: KernelConfig = {
+    shell_port: "53794",
+    iopub_port: "53795",
+    stdin_port: "53796",
+    control_port: "53797",
+    hb_port: "53798",
+    key: "",
+    ip: "127.0.0.1",
+    transport: "tcp",
+    signature_scheme: "",
+    kernel_name: ""
+}
 
-// const j = new JupyterKernelClient(config);
-// j.getKernelInfo();
-// j.startIOPubLoop()
+function printData(data: any) {
+    console.log(JSON.stringify(data, null, 2));
+}
+
+
+const j = new JupyterKernelClient(config);
+// j.getKernelInfo(printData);
+j.setVerbose(true)
+j.sendShellCommand("input()", printData)
+j.startSTDINLoop((data) => {
+    console.log(JSON.stringify(data, null, 2))
+})
+j.subscribeToIOLoop((data) => {
+    console.log(JSON.stringify(data, null, 2))
+});
 
 
 
