@@ -53,7 +53,8 @@ export class JupyterKernelClient {
     }
 
     public async getKernelInfo(shellMessageReciever: MessageReciever) {
-        await this.shell.send(this.buildJupyterMessage("kernel_info_request", {}));
+        const message = this.buildJupyterMessage("kernel_info_request", {});
+        await this.shell.send(message);
 
         const messages = await this.shell.receive()
 
@@ -74,8 +75,12 @@ export class JupyterKernelClient {
         }
     }
 
-    public async stdinResponse() {
-        
+    public async sendStdinReply(reply: string) {
+        const content = {
+            value: reply
+        };
+        const message = this.buildJupyterMessage("input_reply", content);
+        this.stdin.send(message);
     }
 
     public async sendShellCommand(command: string, shellMessageReciever: MessageReciever) {
@@ -96,6 +101,11 @@ export class JupyterKernelClient {
         const messages = await this.shell.receive()
         const kernelData = this.recvMessage(messages);
         shellMessageReciever(kernelData);
+    }
+
+    public async sendKernelInterruptRequest() {
+        const request = this.buildJupyterMessage("interrupt_request", {});
+        await this.shell.send(request);
     }
 
     private recvMessage(messages: Buffer[]): any {
@@ -203,14 +213,14 @@ function printData(data: any) {
 
 const j = new JupyterKernelClient(config);
 // j.getKernelInfo(printData);
-j.setVerbose(true)
-j.sendShellCommand("input()", printData)
-j.startSTDINLoop((data) => {
-    console.log(JSON.stringify(data, null, 2))
-})
-j.subscribeToIOLoop((data) => {
-    console.log(JSON.stringify(data, null, 2))
-});
+// j.setVerbose(true)
+// j.sendShellCommand("input()", printData)
+// j.startSTDINLoop((data) => {
+//     console.log(JSON.stringify(data, null, 2))
+// })
+// j.subscribeToIOLoop((data) => {
+//     console.log(JSON.stringify(data, null, 2))
+// });
 
 
 
