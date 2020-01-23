@@ -7,6 +7,8 @@ import { v4 as uuid } from 'uuid';
 // 'stdin' : zmq.DEALER,
 // 'control': zmq.DEALER,
 
+var wait = (ms: number) => new Promise((r, j)=>setTimeout(r, ms))
+
 export class JupyterKernelClient {
     shell: Dealer;
     ioPub: Subscriber;
@@ -21,6 +23,8 @@ export class JupyterKernelClient {
 
     id = uuid();
 
+    running: boolean;
+
     constructor(config: KernelConfig) {
         const base_url = `${config.transport}://${config.ip}`;
 
@@ -34,7 +38,7 @@ export class JupyterKernelClient {
 
         this.stdin = new Dealer();
         this.stdin.routingId = this.id;
-        console.log(`${base_url}:${config.stdin_port}`)
+
         this.stdin.connect(`${base_url}:${config.stdin_port}`);
 
         this.control = new Dealer();
@@ -42,13 +46,29 @@ export class JupyterKernelClient {
 
         this.heartbeat = new Request();
         this.heartbeat.connect(`${base_url}:${config.hb_port}`);
+
+        this.running = true;
+    }
+
+    public stop() {
+        this.running = false;
+
+        this.shell.close();
+        this.ioPub.close();
+        this.stdin.close();
+        this.control.close();
+        this.heartbeat.close();
     }
 
     public async subscribeToIOLoop(ioMessageReciever: MessageReciever) {
-        while (true) {
-            const messages = await this.ioPub.receive();
-            const data = this.recvMessage(messages);
-            ioMessageReciever(data);
+        while (this.running) {
+            try {
+                const messages = await this.ioPub.receive();
+                const data = this.recvMessage(messages);
+                ioMessageReciever(data);
+            } catch (exception) {
+                await wait(100);
+            }
         }
     }
 
@@ -63,15 +83,30 @@ export class JupyterKernelClient {
     }
 
     public async startSTDINLoop(stdinMessageReciever: MessageReciever) {
-        while (true) {
-            this.log("waiting for std_in")
-            const messages = await this.stdin.receive();
-            this.log('recieved std in message')
-            this.log('parsing std_in message')
+        while (this.running) {
+            try {
+                this.log("waiting for std_in")
+                const messages = await this.stdin.receive();
+                this.log('recieved std in message')
+                this.log('parsing std_in message')
+                const data = this.recvMessage(messages);
+                this.log('parsed std_in message:')
+                this.log(JSON.stringify(data, null, 2));
+                stdinMessageReciever(data);
+            } catch (exception) {
+                await wait(100);   
+            }
+        }
+    }
+
+    public async checkHeartbeat(heartbeatReciever: MessageReciever) {
+        try {
+            await this.heartbeat.send(this.buildJupyterMessage('heartbeat', {}));
+            const messages = await this.heartbeat.receive();
             const data = this.recvMessage(messages);
-            this.log('parsed std_in message:')
-            this.log(JSON.stringify(data, null, 2));
-            stdinMessageReciever(data);
+            heartbeatReciever(data);
+        } catch (exception) {
+
         }
     }
 
@@ -95,12 +130,16 @@ export class JupyterKernelClient {
             allow_stdin: true,
             stop_on_error: true
         }
+        
+        try {
+            const request = this.buildJupyterMessage("execute_request", content)
+            await this.shell.send(request);
+            const messages = await this.shell.receive()
+            const kernelData = this.recvMessage(messages);
+            shellMessageReciever(kernelData);
+        } catch (exception) {
 
-        const request = this.buildJupyterMessage("execute_request", content)
-        await this.shell.send(request);
-        const messages = await this.shell.receive()
-        const kernelData = this.recvMessage(messages);
-        shellMessageReciever(kernelData);
+        }
     }
 
     public async sendKernelInterruptRequest() {
