@@ -118,13 +118,13 @@ export class JupyterKernelClient {
         this.stdin.send(message);
     }
 
-    public async sendShellCommand(command: string, shellMessageReciever: MessageReciever) {
+    public async sendShellCommand(command: string, shellMessageReciever: MessageReciever, silent=false) {
         // will this receive data?
         // yes it will
         // do I need to get the message?
         const content = {
             code: command,
-            silent: false,
+            silent: silent,
             store_history: true,
             // user_expressions ???,
             allow_stdin: true,
@@ -250,10 +250,10 @@ function printData(data: any) {
 }
 
 
-const j = new JupyterKernelClient(config);
+// const j = new JupyterKernelClient(config);
 // j.getKernelInfo(printData);
 // j.setVerbose(true)
-// j.sendShellCommand("input()", printData)
+// j.sendShellCommand("get_ipython().display_pub.publish({'application/json': ''})", printData, true)
 // j.startSTDINLoop((data) => {
 //     console.log(JSON.stringify(data, null, 2))
 // })
