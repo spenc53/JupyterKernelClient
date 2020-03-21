@@ -6,7 +6,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\"",
     "build": "tsc",
-    "build-dev": "tsc -w"
+    "build-dev": "tsc -w",
+    "dist": "tsc && np"
   },
   "keywords": [],
   "author": "Spencer Seeger",

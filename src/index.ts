@@ -1,12 +1,6 @@
 import { Subscriber, Request, Dealer } from 'zeromq';
 import { v4 as uuid } from 'uuid';
 
-// 'hb' : zmq.REQ,
-// 'shell' : zmq.DEALER,
-// 'iopub' : zmq.SUB,
-// 'stdin' : zmq.DEALER,
-// 'control': zmq.DEALER,
-
 var wait = (ms: number) => new Promise((r, j)=>setTimeout(r, ms))
 
 export class JupyterKernelClient {
@@ -119,9 +113,6 @@ export class JupyterKernelClient {
     }
 
     public async sendShellCommand(command: string, shellMessageReciever: MessageReciever, silent=false) {
-        // will this receive data?
-        // yes it will
-        // do I need to get the message?
         const content = {
             code: command,
             silent: silent,
@@ -137,6 +128,27 @@ export class JupyterKernelClient {
             const messages = await this.shell.receive()
             const kernelData = this.recvMessage(messages);
             shellMessageReciever(kernelData);
+        } catch (exception) {
+
+        }
+    }
+
+    public async sendControlCommand(command: string, controlMessageReciever: MessageReciever, silent=true) {
+        const content = {
+            code: command,
+            silent: silent,
+            store_history: true,
+            // user_expressions ???,
+            allow_stdin: true,
+            stop_on_error: true
+        }
+        
+        try {
+            const request = this.buildJupyterMessage("execute_request", content)
+            await this.shell.send(request);
+            const messages = await this.shell.receive()
+            const kernelData = this.recvMessage(messages);
+            controlMessageReciever(kernelData);
         } catch (exception) {
 
         }
@@ -202,8 +214,7 @@ export class JupyterKernelClient {
     }
 }
 
-
-export interface JupyterMessage {
+interface JupyterMessage {
     ids?: any[];
     delimiter?: string;
     hmac?: string;
@@ -227,47 +238,11 @@ export interface KernelConfig {
     kernel_name: string;
 }
 
-interface MessageReciever {
+export interface MessageReciever {
     (data: any): void;
 };
 
-
-const config: KernelConfig = {
-    shell_port: "53794",
-    iopub_port: "53795",
-    stdin_port: "53796",
-    control_port: "53797",
-    hb_port: "53798",
-    key: "",
-    ip: "127.0.0.1",
-    transport: "tcp",
-    signature_scheme: "",
-    kernel_name: ""
-}
-
-function printData(data: any) {
-    console.log(JSON.stringify(data, null, 2));
-}
-
-
-// const j = new JupyterKernelClient(config);
-// j.getKernelInfo(printData);
-// j.setVerbose(true)
-// j.sendShellCommand("get_ipython().display_pub.publish({'application/json': ''})", printData, true)
-// j.startSTDINLoop((data) => {
-//     console.log(JSON.stringify(data, null, 2))
-// })
-// j.subscribeToIOLoop((data) => {
-//     console.log(JSON.stringify(data, null, 2))
-// });
-
-
-
-
-
-
-
-
-
 // security stuff
 // https://stackoverflow.com/questions/7480158/how-do-i-use-node-js-crypto-to-create-a-hmac-sha1-hash
+
+// CONSIDER USING SUBJECTS
